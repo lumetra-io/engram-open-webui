@@ -7,3 +7,6 @@ node_modules/
 # Local-only launch collateral (lives in ~/Documents/lumetra-marketing/)
 DISCORD_POST.md
 discord-launch-post.md
+
+__pycache__/
+*.pyc
