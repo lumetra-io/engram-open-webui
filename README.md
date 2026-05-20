@@ -61,15 +61,13 @@ curl http://127.0.0.1:8001/engram/openapi.json | head
 
 ### 4. Wire Open WebUI to the bridge
 
-In Open WebUI, go to **Admin Settings → External Tools → + Add Server**. Pick **OpenAPI** (the simplest option), set the URL to:
+In Open WebUI, go to **Admin Settings → External Tools → + Add Server**. Use the **OpenAPI** tab — [`mcpo`](https://github.com/open-webui/mcpo) exposes an OpenAPI surface only, not Streamable HTTP MCP, so the **MCP (Streamable HTTP)** tab will not work against this bridge. Set the URL to:
 
 ```
 http://localhost:8001/engram
 ```
 
 Save. The six Engram tools now appear under External Tools and can be enabled per-model.
-
-(For a more dynamic flow, you can instead pick **MCP (Streamable HTTP)** and point at `http://localhost:8001/engram` — Open WebUI accepts both shapes against `mcpo`.)
 
 ## Tools exposed
 
