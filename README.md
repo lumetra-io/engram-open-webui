@@ -1,65 +1,100 @@
 # engram-open-webui
 
-[Engram](https://lumetra.io) memory tools for [Open WebUI](https://openwebui.com) — durable, explainable memory for AI agents.
+[Open WebUI](https://github.com/open-webui/open-webui) integration for [Engram](https://lumetra.io) — durable, explainable memory for the popular self-hosted local-AI UI.
 
-This is a native Open WebUI **Tools** plugin: a single Python file that registers six callable tools backed by the hosted Engram REST API at `api.lumetra.io`. No `mcpo` bridge, no OpenAPI server, no extra container — just upload `engram.py` in the admin UI and the tools appear in the workspace tool catalog.
+Adds the six Engram tools — `store_memory`, `query_memory`, `list_memories`, `list_buckets`, `delete_memory`, `clear_memories` — to any model you run through Open WebUI. Works by running Open WebUI's own [`mcpo`](https://github.com/open-webui/mcpo) bridge in front of the Engram MCP endpoint, then plugging that into Open WebUI's External Tools panel.
 
-## Install
+## Why a bridge?
 
-### Option A — paste into the admin UI (fastest)
+Open WebUI's "External Tools" panel speaks **Streamable HTTP MCP** (or OpenAPI). The hosted Engram MCP server is currently **SSE-only**. The Open WebUI team's official answer for this is `mcpo` — a tiny proxy that exposes any MCP server (any transport) as an OpenAPI-compatible HTTP server. It's the cleanest path today and disappears the moment Engram ships native Streamable HTTP.
 
-1. Open Open WebUI as an admin.
-2. Go to **Workspace -> Tools -> +** (the *Create new tool* button).
-3. Paste the contents of [`engram.py`](./engram.py) into the editor and click **Save**.
-4. Open the tool's settings (the gear icon) and fill in **Valves**:
-   - **API key**: your `eng_live_...` token from <https://lumetra.io>
-   - **Base URL**: leave as `https://api.lumetra.io` unless you self-host Engram
-   - **Default bucket**: `default` is fine; change per project as needed
-5. In any chat that should have memory, enable the **Engram Memory** tool from the model's `+` menu.
+## Setup
 
-### Option B — community hub (after we publish)
+### 1. Get an Engram API key
 
-Search for **Engram Memory** on <https://openwebui.com/tools> and click **Get** to import directly into your Open WebUI instance. You'll still configure the Valves the first time you use it.
+Sign up at <https://lumetra.io> — free tier, no card. You'll see an `eng_live_…` token in your dashboard.
 
-## Configure a BYOK provider key
+```bash
+export ENGRAM_API_KEY="eng_live_..."
+```
 
-Engram is bring-your-own-key for the LLM that powers extraction and synthesis. Configure one provider at <https://lumetra.io/models> — we recommend **DeepSeek** (cheap and fast). Without a provider key, `store_memory` and `query_memory` return HTTP 412 from the Engram API.
+### 2. Configure a BYOK provider key
 
-## Tools
+Engram is bring-your-own-key end-to-end for the LLM that handles extraction and synthesis. Configure one provider at <https://lumetra.io/models>. DeepSeek is what we recommend — cheap and fast. Without a provider key, every `store_memory` / `query_memory` returns HTTP 412.
+
+### 3. Run the `mcpo` bridge pointing at Engram
+
+```bash
+pip install mcpo
+
+# Drop this somewhere persistent (the bridge needs to be running for tools to work)
+cat > ~/.config/mcpo/engram.json <<JSON
+{
+  "mcpServers": {
+    "engram": {
+      "type": "sse",
+      "url": "https://mcp.lumetra.io/mcp/sse",
+      "headers": {
+        "Authorization": "Bearer eng_live_..."
+      }
+    }
+  }
+}
+JSON
+
+mcpo --port 8001 --config ~/.config/mcpo/engram.json
+```
+
+You should see:
+
+```
+INFO - Successfully connected to 'engram'.
+INFO - Uvicorn running on http://0.0.0.0:8001
+```
+
+Verify the OpenAPI surface:
+
+```bash
+curl http://127.0.0.1:8001/engram/openapi.json | head
+# Should show paths /store_memory, /query_memory, /list_buckets, /list_memories, /delete_memory, /clear_memories
+```
+
+### 4. Wire Open WebUI to the bridge
+
+In Open WebUI, go to **Admin Settings → External Tools → + Add Server**. Pick **OpenAPI** (the simplest option), set the URL to:
+
+```
+http://localhost:8001/engram
+```
+
+Save. The six Engram tools now appear under External Tools and can be enabled per-model.
+
+(For a more dynamic flow, you can instead pick **MCP (Streamable HTTP)** and point at `http://localhost:8001/engram` — Open WebUI accepts both shapes against `mcpo`.)
+
+## Tools exposed
 
 | Tool | What it does |
 |---|---|
-| `store_memory(content, bucket?)` | Save an atomic fact to a bucket. Buckets auto-create on first write. |
-| `query_memory(question, bucket?)` | Ask a natural-language question against memory. Returns a synthesized answer. |
-| `list_memories(bucket?, limit?)` | Newest-first list of memories in a bucket. |
-| `list_buckets(limit?, offset?)` | Paginated list of buckets in your tenant. |
-| `delete_memory(memory_id, bucket)` | Remove a single memory by UUID. |
-| `clear_memories(bucket)` | Empty a bucket. **Destructive.** |
+| `store_memory(content, bucket?)` | Save a fact to a bucket (defaults to `"default"`). |
+| `query_memory(question, bucket?)` | Hybrid retrieval + synthesized answer with citations. |
+| `list_memories(bucket, limit?)` | Newest-first list of memories in a bucket. |
+| `list_buckets(limit?, offset?)` | Paginated list of all buckets in your tenant. |
+| `delete_memory(memory_id, bucket)` | Remove a single memory. |
+| `clear_memories(bucket)` | Empty a bucket. Destructive. |
 
-## Per-user API keys
+## Production tips
 
-Set a tenant-wide key as an admin in **Valves**. If individual users want to use their own Engram tenant, they can paste their key into **UserValves** from the in-chat settings; the per-user key takes precedence when present.
+- **Keep `mcpo` running** as a systemd service / docker-compose service / supervisor job. If `mcpo` is down, Open WebUI gets a tool-call error.
+- **Set `WEBUI_SECRET_KEY`** in your Open WebUI env so OAuth-connected tools don't break on container restart.
+- **Don't expose port 8001 publicly** — `mcpo` is meant to sit behind Open WebUI on the same host (or behind your reverse proxy with auth). It carries your Engram API key in cleartext per request.
 
-## Self-hosted Engram
+## Verified
 
-If you run Engram on your own infrastructure instead of `api.lumetra.io`, set **Base URL** in the admin Valves to your endpoint (for example, `https://engram.internal.example.com`). The tools will hit the same `/v1/...` paths there.
+Smoke-tested end-to-end:
 
-## Manual verification
-
-Outside Open WebUI, confirm Engram itself is reachable with your key:
-
-```bash
-curl -s https://api.lumetra.io/v1/buckets \
-  -H "Authorization: Bearer eng_live_..." | head -c 300
-```
-
-A JSON bucket list confirms the key is valid. If Open WebUI shows the tool but calls fail, double-check the API key in Valves and that your Open WebUI process can reach `api.lumetra.io`.
-
-## Source & contact
-
-- Source: <https://github.com/lumetra-io/engram-open-webui>
-- Issues: <https://github.com/lumetra-io/engram-open-webui/issues>
-- Lumetra: <https://lumetra.io> · <support@lumetra.io>
+- `mcpo --config …` connected to `mcp.lumetra.io/mcp/sse` and exposed `LumetraMemory` as an OpenAPI server with the six expected endpoints.
+- `POST http://127.0.0.1:8001/engram/store_memory` returned a real `memory_id` and `status=stored`.
+- `POST http://127.0.0.1:8001/engram/list_memories` returned the just-stored memory with the correct content and timestamp.
 
 ## License
 
